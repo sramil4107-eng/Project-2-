@@ -1,152 +1,217 @@
-import copy
-from collections import deque
-from typing import Optional
+class Stack:
 
-# Тип для состояния (хешируемый кортеж кортежей)
-State = tuple[tuple[int, ...], ...]
+    def __init__(self, items: list[int] | None = None) -> None:
+        #Внутреннее хранилище — список; items[0] — дно, items[-1] — верх
+        self._data: list[int] = list(items) if items else []
 
-# Тип для одной операции (from_stack, to_stack), нумерация с 1
+    def push(self, item: int) -> None:
+        self._data.append(item)
+
+    def pop(self) -> int:
+        return self._data.pop()
+
+    def peek(self) -> int:
+        return self._data[-1]
+
+    def is_empty(self) -> bool:
+        return len(self._data) == 0
+
+    def size(self) -> int:
+        return len(self._data)
+
+    def to_tuple(self) -> tuple[int, ...]:
+        return tuple(self._data)
+
+    def copy(self) -> "Stack":
+        return Stack(list(self._data))
+
+    def is_sorted(self, target_type: int) -> bool:
+        return all(c == target_type for c in self._data)
+
+    def __repr__(self) -> str:
+        return f"Stack({self._data})"
+
+# Класс Queue — очередь для BFS
+
+
+class Queue:
+    def __init__(self) -> None:
+        self._data: list = []
+        self._head: int = 0  # индекс первого непрочитанного элемента
+
+    def enqueue(self, item) -> None:
+        self._data.append(item)
+
+    def dequeue(self):
+        item = self._data[self._head]
+        self._head += 1
+        # Периодически чистим обработанную часть, чтобы не росла память
+        if self._head > 1000:
+            self._data = self._data[self._head:]
+            self._head = 0
+        return item
+
+    def is_empty(self) -> bool:
+        return self._head >= len(self._data)
+
+
+
+# Класс Solver — решатель задачи
+
+
+# Тип псевдонимов
+State     = tuple[tuple[int, ...], ...]
 Operation = tuple[int, int]
 
-# Тип для списка стопок
-Stacks = list[list[int]]
+BFS_LIMIT: int = 20  # при ≤ 20 контейнерах — BFS, иначе жадный
 
-BFS_LIMIT: int = 20  # при ≤ 20 контейнерах используем BFS, иначе — жадный
 
-# Вспомогательные функции
+class Solver:
+    def __init__(self, stacks: list[Stack]) -> None:
+        self._n: int = len(stacks)
+        self._stacks: list[Stack] = stacks
 
-def is_sorted(stacks: Stacks) -> bool:
-    for i, stack in enumerate(stacks):
-        if any(c != i + 1 for c in stack):
-            return False
-    return True
+    #Вспомогательные методы
 
-def to_state(stacks: Stacks) -> State:
-    return tuple(tuple(s) for s in stacks)
+    def _total(self) -> int:
+        return sum(s.size() for s in self._stacks)
 
-def from_state(state: State) -> Stacks:
-    return [list(s) for s in state]
+    @staticmethod
+    def _is_state_sorted(state: State) -> bool:
+        for i, tup in enumerate(state):
+            if any(c != i + 1 for c in tup):
+                return False
+        return True
 
-def total_containers(stacks: Stacks) -> int:
-    return sum(len(s) for s in stacks)
+    @staticmethod
+    def _stacks_from_state(state: State) -> list[Stack]:
+        return [Stack(list(tup)) for tup in state]
 
-#BFS-решатель
+    @staticmethod
+    def _state_from_stacks(stacks: list[Stack]) -> State:
+        return tuple(s.to_tuple() for s in stacks)
 
-def solve_bfs(stacks_input: Stacks) -> Optional[list[Operation]]:
+    def _is_sorted(self, stacks: list[Stack]) -> bool:
+        for i, stack in enumerate(stacks):
+            if not stack.is_sorted(i + 1):
+                return False
+        return True
 
-    n: int = len(stacks_input)
+    #BFS
 
-    if is_sorted(stacks_input):
-        return []
+    def _solve_bfs(self) -> list[Operation] | None:
 
-    start: State = to_state(stacks_input)
+        start: State = self._state_from_stacks(self._stacks)
 
-    # parent[state] хранит (предыдущее_состояние, из_стопки, в_стопку)
-    parent: dict[State, Optional[tuple[State, int, int]]] = {start: None}
-    queue: deque[State] = deque([start])
+        if self._is_state_sorted(start):
+            return []
 
-    while queue:
-        cur_state: State = queue.popleft()
-        cur: Stacks = from_state(cur_state)
+        # parent[state] = (предыдущее_состояние, из_стопки, в_стопку)
+        parent: dict[State, tuple[State, int, int] | None] = {start: None}
+        queue: Queue = Queue()
+        queue.enqueue(start)
 
-        for src in range(n):
-            if not cur[src]:
-                continue
+        while not queue.is_empty():
+            cur_state: State = queue.dequeue()
+            cur: list[Stack] = self._stacks_from_state(cur_state)
 
-            top: int = cur[src][-1]
+            for src in range(self._n):
+                if cur[src].is_empty():
+                    continue
 
-            for dst in range(n):
+                top: int = cur[src].peek()
+
+                for dst in range(self._n):
+                    if dst == src:
+                        continue
+
+                    # Выполняем ход
+                    next_stacks: list[Stack] = self._stacks_from_state(cur_state)
+                    next_stacks[src].pop()
+                    next_stacks[dst].push(top)
+                    ns: State = self._state_from_stacks(next_stacks)
+
+                    if ns in parent:
+                        continue
+
+                    parent[ns] = (cur_state, src + 1, dst + 1)
+
+                    if self._is_state_sorted(ns):
+                        # Восстанавливаем путь
+                        ops: list[Operation] = []
+                        state: State = ns
+                        while parent[state] is not None:
+                            prev, f, t = parent[state]
+                            ops.append((f, t))
+                            state = prev
+                        ops.reverse()
+                        return ops
+
+                    queue.enqueue(ns)
+
+        return None  # решения нет
+
+    #Жадный алгоритм
+
+    def _solve_greedy(self) -> list[Operation] | None:
+        # Работаем на копиях, чтобы не менять исходные данные
+        stacks: list[Stack] = [s.copy() for s in self._stacks]
+        operations: list[Operation] = []
+        max_ops: int = self._n * 500 * (self._n + 1) * 20 + 1
+
+        while not self._is_sorted(stacks):
+            moved: bool = False
+
+            # Приоритет 1: прямой ход
+            for src in range(self._n):
+                if stacks[src].is_empty():
+                    continue
+                top: int = stacks[src].peek()
+                dst: int = top - 1  # индекс целевой стопки (0-based)
                 if dst == src:
                     continue
+                if stacks[dst].is_sorted(top):  # пустая или только такой вид
+                    stacks[src].pop()
+                    stacks[dst].push(top)
+                    operations.append((src + 1, dst + 1))
+                    moved = True
+                    if len(operations) > max_ops:
+                        return None
+                    break
 
-                # Выполняем ход: берём верхний из src, кладём в dst
-                next_stacks: Stacks = from_state(cur_state)
-                next_stacks[src].pop()
-                next_stacks[dst].append(top)
-                ns: State = to_state(next_stacks)
-
-                if ns in parent:
-                    continue
-
-                parent[ns] = (cur_state, src + 1, dst + 1)
-
-                if is_sorted(next_stacks):
-                    # Восстанавливаем путь от финального состояния к начальному
-                    ops: list[Operation] = []
-                    state: State = ns
-                    while parent[state] is not None:
-                        prev_state, f, t = parent[state]  # type: ignore[misc]
-                        ops.append((f, t))
-                        state = prev_state
-                    ops.reverse()
-                    return ops
-
-                queue.append(ns)
-
-    return None  # решения нет
-
-#Жадный решатель для больших данных
-
-def solve_greedy(stacks_input: Stacks) -> Optional[list[Operation]]:
-    stacks: Stacks = copy.deepcopy(stacks_input)
-    n: int = len(stacks)
-    operations: list[Operation] = []
-    max_ops: int = n * 500 * (n + 1) * 20 + 1
-
-    while not is_sorted(stacks):
-        moved: bool = False
-
-        # Приоритет 1: прямой ход в целевую стопку
-        for src in range(n):
-            if not stacks[src]:
-                continue
-            top: int = stacks[src][-1]
-            dst: int = top - 1  # индекс целевой стопки (0-based)
-            if dst == src:
-                continue
-            if all(c == top for c in stacks[dst]):
-                stacks[src].pop()
-                stacks[dst].append(top)
-                operations.append((src + 1, dst + 1))
-                moved = True
-                if len(operations) > max_ops:
-                    return None
-                break
-
-        if moved:
-            continue
-
-        # Приоритет 2: буферный ход — верхний «чужой» в любую пустую стопку
-        for src in range(n):
-            if not stacks[src]:
-                continue
-            top = stacks[src][-1]
-            # Пропускаем контейнеры, которые уже на правильном месте
-            if src == top - 1 and all(c == top for c in stacks[src]):
-                continue
-
-            for buf in range(n):
-                if buf == src or stacks[buf]:
-                    continue
-                stacks[src].pop()
-                stacks[buf].append(top)
-                operations.append((src + 1, buf + 1))
-                moved = True
-                if len(operations) > max_ops:
-                    return None
-                break
             if moved:
-                break
+                continue
 
-        if not moved:
-            return None  # тупик — задача не имеет решения
+            # Приоритет 2: буферный ход в пустую стопку
+            for src in range(self._n):
+                if stacks[src].is_empty():
+                    continue
+                top = stacks[src].peek()
+                # Пропускаем контейнеры, которые уже на месте
+                if src == top - 1 and stacks[src].is_sorted(top):
+                    continue
 
-    return operations
+                for buf in range(self._n):
+                    if buf == src or not stacks[buf].is_empty():
+                        continue
+                    stacks[src].pop()
+                    stacks[buf].push(top)
+                    operations.append((src + 1, buf + 1))
+                    moved = True
+                    if len(operations) > max_ops:
+                        return None
+                    break
+                if moved:
+                    break
 
-#Главная функция
+            if not moved:
+                return None  # тупик
 
-def solve(stacks_input: Stacks) -> Optional[list[Operation]]:
-    total: int = total_containers(stacks_input)
-    if total <= BFS_LIMIT:
-        return solve_bfs(stacks_input)
-    return solve_greedy(stacks_input)
+        return operations
+
+#Главный метод
+
+    def solve(self) -> list[Operation] | None:
+        if self._total() <= BFS_LIMIT:
+            return self._solve_bfs()
+        return self._solve_greedy()
